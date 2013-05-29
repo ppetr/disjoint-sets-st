@@ -8,12 +8,13 @@ module Data.DisjointSet
     (
     -- * Core functions.
       DSet
-    , makeSet
+    , singletons
     , find
     , union
+    , classes
     -- * Utility functions.
-    , makeSetIO
-    , makeSetST
+    , singletonsIO
+    , singletonsST
     , sameClass
     )
 where
@@ -26,37 +27,37 @@ import Data.Array.ST (STUArray)
 
 -- | A collection of disjoint sets on 'Int's backed by a
 -- mutable array of type @a@.
-data DSet a = DSet { parents :: !(a Int Int), ranks :: !(a Int Int) }
+data DSet a = DSet { classesAr :: !(a () Int), parents :: !(a Int Int), ranks :: !(a Int Int) }
 
 -- | Creates a new disjoint set structure with the specified bounds.
 -- Calling @mkset (i,j)@ creates a collection of singleton sets indexed
 -- by numbers from @i@ to @j@ (inclusive).
-makeSet :: (MArray a Int m) => (Int, Int) -> m (DSet a)
-makeSet bs = liftM2 DSet (newListArray bs rng) (newListArray bs rng)
+singletons :: (MArray a Int m) => (Int, Int) -> m (DSet a)
+singletons bs = liftM3 DSet (newArray ((),()) (rangeSize bs)) (newListArray bs rng) (newListArray bs rng)
   where rng = range bs
 
 -- | A convenience function for creating an efficient, 'ST'-based array.
-makeSetST :: (Int, Int) -> ST s (DSet (STUArray s))
-makeSetST = makeSet
+singletonsST :: (Int, Int) -> ST s (DSet (STUArray s))
+singletonsST = singletons
 
 -- | A convenience function for creating an efficient, 'IO'-based array.
-makeSetIO :: (Int, Int) -> IO (DSet IOUArray)
-makeSetIO = makeSet
+singletonsIO :: (Int, Int) -> IO (DSet IOUArray)
+singletonsIO = singletons
 
 getParent :: (MArray a Int m) => DSet a -> Int -> m Int
-getParent (DSet ps _) = readArray ps
+getParent (DSet _ ps _) = readArray ps
 {-# INLINE getParent #-}
 
 setParent :: (MArray a Int m) => DSet a -> Int -> Int -> m ()
-setParent (DSet ps _) = writeArray ps
+setParent (DSet _ ps _) = writeArray ps
 {-# INLINE setParent #-}
 
 getRank :: (MArray a Int m) => DSet a -> Int -> m Int
-getRank (DSet _ rs) = readArray rs
+getRank (DSet _ _ rs) = readArray rs
 {-# INLINE getRank #-}
 
 setRank :: (MArray a Int m) => DSet a -> Int -> Int -> m ()
-setRank (DSet _ rs) = writeArray rs
+setRank (DSet _ _ rs) = writeArray rs
 {-# INLINE setRank #-}
 
 -- | Returns the identifier of the subset a given element is in.
@@ -81,11 +82,15 @@ sameClass ds x y = liftM2 (==) (find ds x) (find ds y)
 {-# INLINE sameClass #-}
 
 -- | Joins the classes of given two elements.
-union :: (MArray a Int m) => DSet a -> Int -> Int -> m ()
+-- Returns 'True' if the two classes were merged (i.e. were distinct before),
+-- 'False' otherwise.
+union :: (MArray a Int m) => DSet a -> Int -> Int -> m Bool
 union ds x y = do
     xf <- find ds x
     yf <- find ds y
-    when (xf /= yf) $ do
+    if xf == yf
+      then return False
+      else do
         xr <- getRank ds xf
         yr <- getRank ds yf
         case compare xr yr of
@@ -94,5 +99,13 @@ union ds x y = do
             EQ  -> do
                     setParent ds yf xf
                     setRank ds xf (xr + 1)
-{-# SPECIALIZE union :: DSet (STUArray s) -> Int -> Int -> ST s () #-}
-{-# SPECIALIZE union :: DSet IOUArray     -> Int -> Int -> IO () #-}
+        let car = classesAr ds
+        liftM (subtract 1) (readArray car ()) >>= writeArray car ()
+        return True
+{-# SPECIALIZE union :: DSet (STUArray s) -> Int -> Int -> ST s Bool #-}
+{-# SPECIALIZE union :: DSet IOUArray     -> Int -> Int -> IO   Bool #-}
+
+classes :: (MArray a Int m) => DSet a -> m Int
+classes (DSet c _ _) = readArray c ()
+{-# SPECIALIZE classes :: DSet (STUArray s) -> ST s Int #-}
+{-# SPECIALIZE classes :: DSet IOUArray     -> IO   Int #-}
