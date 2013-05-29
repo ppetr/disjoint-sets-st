@@ -1,0 +1,12 @@
+dist
+docs
+wiki
+TAGS
+tags
+wip
+.*.swp
+.*.swo
+*.o
+*.hi
+*~
+*#
